@@ -1,0 +1,1016 @@
+# Carregar les dades 
+bbdd_original <- readxl::read_excel("RESPUESTAS.xlsx")
+
+# Carregar els paquets
+library(dplyr)
+library(stringr)
+library(tidyverse)
+library(sf)
+library(ggplot2)
+library(rnaturalearth)
+
+# Verificar duplicats a la columna "empresa"
+empresas_duplicadas <- bbdd_original %>% 
+  group_by(
+    `¿Cuál es el nombre de la empresa en la que trabajas?`) %>% 
+  filter(n() > 1) %>% 
+  distinct(`¿Cuál es el nombre de la empresa en la que trabajas?`)
+
+# Verificar canvis als sufixes de les empresas
+sufijos <- c("S.L.", "S.A.", "S.L.U.")
+empresas_con_sufijos <- bbdd_original %>% 
+  filter(grepl(paste(sufijos, collapse = "|"),
+               `¿Cuál es el nombre de la empresa en la que trabajas?`, 
+               ignore.case = TRUE))
+
+duplicados <- duplicated(bbdd_original)
+bbdd_original[duplicados,]
+
+# Imprimir resultats
+if (nrow(empresas_duplicadas) > 0) {
+  cat("Empresas duplicadas:\n")
+  print(empresas_duplicadas)
+} else {
+  cat("No se encontraron empresas duplicadas.\n")
+}
+
+# Eliminar files que no hagin passat el filtre
+del <- which(bbdd_original$`¿Eres uno/a de los/las directores/as de la empresa?`=="No")
+bbdd_sinrespuesta <- bbdd_original[-del,]
+
+# Eliminar variables que proporcionen informació de l'empresa
+bbdd_sinnombre <- bbdd_original[,-c(1,52,53)]
+
+# Canviar nom a les variables
+(colnames(bbdd_sinnombre) <- c("dueno","director",
+                               "gen_dir","nac_dir","an_dir","num_dueno","gen_duenos_emp",
+                               "gen_un_duen","nac_un_duen","an_un_duen","mot_duen",
+                               "num_v_duen","gen_v_duen","gen_v_u_duen","nac_v_u_duen",
+                               "an_v_u_duen","mot_v_duen",
+                               "zona","fundada","personal","sector","impor","expor",
+                               "n.suc","suc_fuera_cat", 
+                               "ERTO","covid1","covid2","covid3","covid4","covid5",
+                               "covid6","covid7","covid8","covid9",
+                               "esf1","esf2","esf3","esf4","esf5","esf6","esf7","esf8",
+                               "esf9","esf10","NIVEL_ESF",
+                               "num_hij","sit_sent","estudios","horas"))
+
+# Manipulació de les dades originals
+
+## Selecció de resposta entre propietaris o directors
+duen <- as.numeric()
+for(i in 1:nrow(bbdd_sinnombre)){
+  if(bbdd_sinnombre$dueno[i]=="No"){duen[i]<-"direc"}
+  if(bbdd_sinnombre$dueno[i]=="Sí, soy el/la único/a dueño/a"){duen[i]<-"uprop"}
+  if(bbdd_sinnombre$dueno[i]=="Sí, comparto la empresa con más personas")
+  {duen[i]<-"vprop"}
+}
+
+## Ajuntar variables de gènere de la persona que contesta
+gen <- as.numeric(nrow(bbdd_sinnombre))
+fem <- c(which(bbdd_sinnombre$gen_dir=="Femenino"),
+         which(bbdd_sinnombre$gen_un_duen=="Femenino"),
+         which(bbdd_sinnombre$gen_v_u_duen=="Femenino"))
+mas <- c(which(bbdd_sinnombre$gen_dir=="Masculino"),
+         which(bbdd_sinnombre$gen_un_duen=="Masculino"),
+         which(bbdd_sinnombre$gen_v_u_duen=="Masculino"))
+gen[fem] <- "f";gen[mas] <- "m"
+
+## Ajuntar variables de gènere de l'empresa
+gen_emp <- as.numeric(nrow(bbdd_sinnombre))
+fem <- c(which(bbdd_sinnombre$gen_duenos_emp=="Femenino"),
+         which(bbdd_sinnombre$gen_v_duen=="Todo femenino"),
+         which(bbdd_sinnombre$gen_un_duen=="Femenino"))
+mas <- c(which(bbdd_sinnombre$gen_duenos_emp=="Masculino"),
+         which(bbdd_sinnombre$gen_v_duen=="Todo masculino"),
+         which(bbdd_sinnombre$gen_un_duen=="Masculino"))
+mix <- c(which(bbdd_sinnombre$gen_duenos_emp=="Mixto"),
+         which(bbdd_sinnombre$gen_v_duen=="Mixto"),
+         which(bbdd_sinnombre$gen_un_duen=="Neutro"))
+gen_emp[fem] <- "f"; gen_emp[mas] <- "m"; gen_emp[mix] <- "x"
+
+## Any de naixement de l'individu
+nacimiento <- as.numeric(nrow(bbdd_sinnombre))
+dir <- which(bbdd_sinnombre$nac_dir!="NA")
+un_duen <- which(bbdd_sinnombre$nac_un_duen!="NA")
+v_duen <- which(bbdd_sinnombre$nac_v_u_duen!="NA")
+nacimiento[dir] <- bbdd_sinnombre$nac_dir[dir]
+nacimiento[un_duen] <- bbdd_sinnombre$nac_un_duen[un_duen]
+nacimiento[v_duen] <- bbdd_sinnombre$nac_v_u_duen[v_duen]
+
+## Any al que va accedir al càrrec
+ano_acceso <- as.numeric(nrow(bbdd_sinnombre))
+dir <- which(bbdd_sinnombre$an_dir!="NA")
+un_duen <- which(bbdd_sinnombre$an_un_duen!="NA")
+v_duen <- which(bbdd_sinnombre$an_v_u_duen!="NA")
+ano_acceso[dir] <- bbdd_sinnombre$an_dir[dir]
+ano_acceso[un_duen] <- bbdd_sinnombre$an_un_duen[un_duen]
+ano_acceso[v_duen] <- bbdd_sinnombre$an_v_u_duen[v_duen]
+
+## Número de propietaris de l'empresa categórica
+num_duenos <- as.numeric(nrow(bbdd_sinnombre))
+dir <- which(bbdd_sinnombre$dueno=="Sí, soy el/la único/a dueño/a")
+un_duen <- which(bbdd_sinnombre$num_dueno!="NA")
+v_duen <- which(bbdd_sinnombre$num_v_duen!="NA")
+num_duenos[dir] <- "Solo una persona es dueña de la empresa"
+num_duenos[un_duen] <- bbdd_sinnombre$num_dueno[un_duen] 
+num_duenos[v_duen] <- "Hay varias personas que son dueñas de la empresa"
+un_duen <- which(num_duenos=="Solo una persona es dueña de la empresa")
+v_duen <- which(num_duenos=="Hay varias personas que son dueñas de la empresa")
+num_duenos[un_duen] <- "u"; num_duenos[v_duen] <- "v"
+
+## Número de propietaris de l'empresa numèrica
+q_duenos <- rep(0,nrow(bbdd_sinnombre[which(bbdd_sinnombre$dueno!="No"),]))
+for(i in 1:nrow(bbdd_sinnombre)){
+  if(bbdd_sinnombre$dueno[i]=="No"){}
+  if(bbdd_sinnombre$dueno[i]=="Sí, soy el/la único/a dueño/a"){q_duenos[i]<-1}
+  if(bbdd_sinnombre$dueno[i]=="Sí, comparto la empresa con más personas")
+  {q_duenos[i] <- bbdd_sinnombre$num_v_duen[i]}
+}
+
+## Motius pels que el propietari ha arribat al càrrec
+mot_duen <- as.numeric(nrow(bbdd_sinnombre))
+un_duen <- which(bbdd_sinnombre$mot_duen!="NA")
+v_duen <- which(bbdd_sinnombre$mot_v_duen!="NA")
+mot_duen[un_duen] <- bbdd_sinnombre$mot_duen[un_duen]
+mot_duen[v_duen] <- bbdd_sinnombre$mot_v_duen[v_duen]
+u1 <- which(mot_duen=="Yo he fundado la empresa")
+u2 <- which(mot_duen=="Heredé la empresa")
+u3 <- which(mot_duen=="He comprado la empresa")
+u4 <- which(mot_duen=="He fundado la empresa con el resto de los propietarios")
+u5 <- which(mot_duen=="He ido escalando posiciones")
+mot_duen[c(u1,u4)] <- 1; mot_duen[u2] <- 2; mot_duen[u3] <- 3; mot_duen[u5] <- 4
+
+## Districtes de Rubí
+zona <- bbdd_sinnombre$zona
+for(i in 1:nrow(bbdd_sinnombre)){
+  if(zona[i]=="Urbanització  de Castellnou y de Can Mir"){zona[i] <- "NO"}
+  if(zona[i]=="Urbanització de Sant Muç"){zona[i] <- "NO"}
+  
+  if(zona[i]=="Can Ximelis - Can Serrafossa"){zona[i] <- "SO"}
+  if(zona[i]=="Centro cívico Can Fatjó"){zona[i] <- "SO"}
+  if(zona[i]=="Can Fatjó - Polígono Cova Solera"){zona[i] <- "SO"}
+  
+  if(zona[i]=="Can Vallhonrat - Ca n'Alzamora"){zona[i] <- "S"}
+  if(zona[i]=="Pl. Constitución"){zona[i] <- "S"}
+  if(zona[i]=="Las Torres - C. Hoquei"){zona[i] <- "S"}
+  if(zona[i]=="CEIP  Montessori"){zona[i] <- "S"}
+  if(zona[i]=="CAP Anton de Borja"){zona[i] <- "S"}
+  if(zona[i]=="Pl. Progrés"){zona[i] <- "S"}
+  if(zona[i]=="Grup vint-i-cinc de Setembre"){zona[i] <- "S"}
+  
+  if(zona[i]=="Juzgados - Pl. Pere Esmendia - C. historiador Serra"){zona[i] <- "C"}
+  if(zona[i]=="Ayuntamiento - Iglesia de San Pedro"){zona[i] <- "C"}
+  if(zona[i]=="Escardívol - C. Dr. Gimbernat"){zona[i] <- "C"}
+  if(zona[i]=="Pl. Pearson - CEIP La Schola"){zona[i] <- "C"}
+  if(zona[i]=="Ateneu municipal"){zona[i] <- "C"}
+  if(zona[i]=="CEIP Pau Casals"){zona[i] <- "C"}
+  if(zona[i]=="CAP Mútua - Torre Bassas"){zona[i] <- "C"}
+  
+  if(zona[i]=="Ctra. Terrassa - Ctra. Sabadell"){zona[i] <- "N"}
+  if(zona[i]=="IES La Serreta"){zona[i] <- "N"}
+  if(zona[i]=="CEIP Mossèn Cinto Verdaguer"){zona[i] <- "N"}
+  if(zona[i]=="C. Basses - C. General Castaños"){zona[i] <- "N"}
+  if(zona[i]=="Ca n'Oriol"){zona[i] <- "N"}
+  if(zona[i]=="Ca n'Oriol Alt"){zona[i] <- "N"}
+  if(zona[i]=="Torre Bassas - Pl. de l'Esbart Dansaire de Rubí"){zona[i] <- "N"}
+  if(zona[i]=="C. Madrid - Av. Estatut"){zona[i] <- "N"}
+  if(zona[i]=="Av. Olimpíades - Polígon Can Rosés"){zona[i] <- "N"}
+  
+  if(zona[i]=="El Celler - C. Monturiol - Estació dels FGC"){zona[i] <- "E"}
+  if(zona[i]=="Escola Patronat Ribes - INEM"){zona[i] <- "E"}
+  if(zona[i]=="C. Bartrina"){zona[i] <- "E"}
+  if(zona[i]=="Escola Germans Maristes de Rubí"){zona[i] <- "E"}
+  if(zona[i]=="Mercat Municipal"){zona[i] <- "E"}
+  if(zona[i]=="Polígon Can Sant Joan"){zona[i] <- "E"}
+}
+
+## Any de fundació
+(a.fun <- bbdd_sinnombre$fundada)
+
+## Personal
+pers <- bbdd_sinnombre$personal
+for(i in 1:length(pers)){
+  if(pers[i]=="0"){pers[i] <- 0}
+  if(pers[i]=="1 - 9"){pers[i] <- 1}
+  if(pers[i]=="10 - 49"){pers[i] <- 2}
+  if(pers[i]=="50 - 199"){pers[i] <- 3}
+  if(pers[i]=="200 - 249"){pers[i] <- 4}
+  if(pers[i]=="Más de 250"){pers[i] <- 4}
+}
+
+## Sector
+sector <- bbdd_sinnombre$sector
+for(i in 1:length(sector)){
+  if(sector[i]=="Primario (agricultura, apicultura, pesca, etc.)"){sector[i] <- 1}
+  if(sector[i]=="Secundario (artesanía, industria, construcción, etc.)"){sector[i] <- 2}
+  if(sector[i]=="Terciario (actividades financieras, hostelería, comunicación, educación, etc.)")
+  {sector[i] <- 3}
+}
+
+## Importació i exportació
+impor <- bbdd_sinnombre$impor
+impor.no <- rep(0, length(impor))
+impor.nac <- rep(0, length(impor))
+impor.eur <- rep(0, length(impor))
+impor.inter <- rep(0, length(impor))
+no <- which(str_detect(impor,"No")==T)
+impor.no[no] <- 1
+seq <- which(str_detect(impor,"Nacional")==T)
+impor.nac[seq] <- 1
+impor.nac[no] <- 0
+seq <- which(str_detect(impor,"Europeo")==T)
+impor.eur[seq] <- 1
+impor.eur[no] <- 0
+seq <- which(str_detect(impor,"Intercontinental")==T)
+impor.inter[seq] <- 1
+impor.inter[no] <- 0
+
+expor <- bbdd_sinnombre$expor
+expor.no <- rep(0, length(expor))
+expor.nac <- rep(0, length(expor))
+expor.eur <- rep(0, length(expor))
+expor.inter <- rep(0, length(expor))
+no <- which(str_detect(expor,"No")==T)
+expor.no[no] <- 1
+seq <- which(str_detect(expor,"Nacional")==T)
+expor.nac[seq] <- 1
+expor.nac[no] <- 0
+seq <- which(str_detect(expor,"Europeo")==T)
+expor.eur[seq] <- 1
+expor.eur[no] <- 0
+seq <- which(str_detect(expor,"Intercontinental")==T)
+expor.inter[seq] <- 1
+expor.inter[no] <- 0
+
+## Sucursales
+nsuc <- bbdd_sinnombre$n.suc
+for(i in 1:length(nsuc)){
+  if(nsuc[i]=="0"){nsuc[i] <- 0}
+  if(nsuc[i]=="1 - 5"){nsuc[i] <- 1}
+  if(nsuc[i]=="6 - 10"){nsuc[i] <- 2}
+  if(nsuc[i]=="11 o més"){nsuc[i] <- 3}
+}
+
+sucfcat <- bbdd_sinnombre$suc_fuera_cat
+
+## Alpha de Cronbach
+alfachronbach <- function(k, cov){
+  pp <- (k/(k-1))
+  sumatot  <- sum(cov)
+  sumadiag <- sum(diag(cov))
+  alfadiag <- pp*(1-(sumadiag/sumatot))
+  return(c("alfa de chronbach con var." = alfadiag))
+}
+
+## Ajuntar variables Covid-19
+covid <- bbdd_sinnombre[,c(27:35)]
+fna <- !complete.cases(covid)
+which(fna == TRUE)
+(cov <- round(cov(covid),2))
+covid$covid9 <- car::recode(covid$covid9, "1=5; 2=4; 4=2; 5=1")
+covid <- covid[,c(1:4,7,9)]; (cov <- round(cov(covid),2))
+round(alfachronbach(ncol(covid), cov),2)
+
+## Ajuntar variables esforç
+esfuerzo2 <- bbdd_sinnombre[,c(36:45)]
+fna <- !complete.cases(esfuerzo2)
+which(fna == TRUE)
+esfuerzo2[is.na(esfuerzo2)] <- 3
+fna <- !complete.cases(esfuerzo2)
+which(fna == TRUE)
+esfsin <- esfuerzo2 %>% 
+  filter(rowSums(esfuerzo2 == 0) > 0)
+esfsin <- esfsin[,-c(3,4,8,9)]
+esfcon <- esfuerzo2 %>% 
+  filter(esf3 != 0 & esf4 != 0 & esf8 != 0 & esf9 != 0)
+(cov <- round(cov(esfsin),2))
+esfsin <- esfsin[,c(1:3)]; (cov <- round(cov(esfsin),2))
+round(alfachronbach(ncol(esfsin), cov),2)
+(cov <- round(cov(esfcon),2))
+esfcon <- esfcon[,c(1,2,3,7,9)]
+esfcon$esf7 <- car::recode(esfcon$esf7, "1=5; 2=4; 4=2; 5=1")
+(cov <- round(cov(esfcon),2))
+round(alfachronbach(ncol(esfcon), cov),2)
+
+## Afegir edat a la que va accedir al càrrec
+(anys <- ano_acceso - nacimiento)
+
+## Afegir variable edat
+(edad <- 2023 - nacimiento)
+
+## Afegir variable dels anys que porta al càrrec
+(anos_dir <- 2023 - ano_acceso)
+
+## Afegir variable anys d'apertura de l'empresa
+(anos_aper <- 2023-a.fun)
+
+# Crear base de dades amb les dades netes
+bdf <- data.frame(duen,gen,num_duenos,gen_emp,
+                  nacimiento,mot_duen,ano_acceso,
+                  zona,a.fun,pers,sector,
+                  anys, edad, anos_dir,
+                  impor.no,impor.nac,impor.eur,impor.inter,
+                  expor.no,expor.nac,expor.eur,expor.inter,
+                  nsuc,sucfcat,
+                  bbdd_sinnombre[,c(47:50)], anos_aper,q_duenos)
+
+# Exploració de la base de dades
+
+## Pasem a factor les variables necessaries
+afactor <- select(bdf, -nacimiento, -ano_acceso,-a.fun, -anys, -edad,
+                  -anos_dir, -num_hij, -anos_aper, -q_duenos)
+names <- names(afactor)
+bdf[names] <- lapply(bdf[names],factor)
+
+## Variables poc informatives i nivells amb poca representació
+repre <- function(var, perc){
+  vector <- numeric()
+  for(i in 1:length(var)){
+    taula <- table(subset(bdf,select=var[i]))/nrow(bdf)<perc
+    if(any(taula)==TRUE){
+      vector <- c(vector, i)
+    }
+  }
+  return(vector)
+}
+names[repre(names, 0.05)]
+
+round(table(bdf$pers)/nrow(bdf),3)
+round(table(bdf$nsuc)/nrow(bdf),3)
+round(table(bdf$sit_sent)/nrow(bdf),3)
+round(table(bdf$estudios)/nrow(bdf),3)
+
+bdf <- bdf %>% mutate(pers = recode(pers, "4" = "3"))
+bdf <- bdf %>% mutate(nsuc = recode(nsuc, "3" = "2"))
+bdf <- bdf %>% mutate(sit_sent = recode(sit_sent, "Casado" = "Con pareja"))
+bdf <- bdf %>% mutate(estudios = recode(estudios, 
+                                        "Bachillerato, BUP, COU" = 
+                                          "ESO, Bachillerato, BUP, COU", 
+                                        "ESO, educación secundaria obligatoria" = 
+                                          "ESO, Bachillerato, BUP, COU"))
+
+names[repre(names, 0.05)]
+
+## Variables amb valors discrepants
+inc <- function(portacion){
+  inc <- matrix(rep(0,ncol(portacion)*ncol(portacion)),ncol=ncol(portacion))
+  for(i in 1:ncol(portacion)){
+    for(j in 1:ncol(portacion)){
+      if(i==j){inc[i,j] <- 1}else{
+        ta <- table(portacion[,i],portacion[,j])
+        if(ta[2,2]==0){inc[i,j]<-0}else{inc[i,j]<-1}
+      }
+    }
+  }
+  return(inc)
+}
+which(bdf$ano_acceso<bdf$a.fun)
+which(bdf$nacimiento>bdf$ano_acceso)
+table(bdf[c(which(bdf$duen!="direc")),2], 
+      bdf[c(which(bdf$duen!="direc")),4])
+inc(bdf[,c(15:18)])
+inc(bdf[,c(19:22)])
+bdf[which(bdf$q_duenos==0),c(1,ncol(bdf))]
+
+## Variables amb valors extrems
+p1 <- ggplot(bdf, aes(x=nacimiento))+geom_boxplot()+
+  geom_point(aes(x = min(bdf$nacimiento), y = 0), size = 1) +
+  geom_point(aes(x = max(bdf$nacimiento), y = 0), size = 1) +
+  xlim(min(bdf$nacimiento)-3, max(bdf$nacimiento)+3)+
+  annotate("text", x=min(bdf$nacimiento), y=-0.1, 
+           label=paste0(min(bdf$nacimiento)), size=3) +
+  annotate("text", x=max(bdf$nacimiento), y=-0.1, 
+           label=paste0(max(bdf$nacimiento)), size=3)
+p2 <- ggplot(bdf, aes(x=ano_acceso))+geom_boxplot()+
+  geom_point(aes(x = min(bdf$ano_acceso), y = 0), size = 1) +
+  geom_point(aes(x = max(bdf$ano_acceso), y = 0), size = 1) +
+  xlim(min(bdf$ano_acceso)-3, max(bdf$ano_acceso)+3)+
+  annotate("text", x=min(bdf$ano_acceso), y=-0.1, 
+           label=paste0(min(bdf$ano_acceso)), size=3) +
+  annotate("text", x=max(bdf$ano_acceso), y=-0.1, 
+           label=paste0(max(bdf$ano_acceso)), size=3)
+p3 <- ggplot(bdf, aes(x=a.fun))+geom_boxplot()+
+  geom_point(aes(x = min(bdf$a.fun), y = 0), size = 1) +
+  geom_point(aes(x = max(bdf$a.fun), y = 0), size = 1) +
+  xlim(min(bdf$a.fun)-3, max(bdf$a.fun)+3)+
+  annotate("text", x=min(bdf$a.fun)+0.5, y=-0.1, 
+           label=paste0(min(bdf$a.fun)), size=3) +
+  annotate("text", x=max(bdf$a.fun)-0.5, y=-0.1, 
+           label=paste0(max(bdf$a.fun)), size=3)
+p4 <- ggplot(bdf, aes(x=anys))+geom_boxplot()+
+  geom_point(aes(x = min(bdf$anys), y = 0), size = 1) +
+  geom_point(aes(x = max(bdf$anys), y = 0), size = 1) +
+  xlim(min(bdf$anys)-3, max(bdf$anys)+3)+
+  annotate("text", x=min(bdf$anys), y=-0.1, 
+           label=paste0(min(bdf$anys)), size=3) +
+  annotate("text", x=max(bdf$anys), y=-0.1, 
+           label=paste0(max(bdf$anys)), size=3)
+p5 <- ggplot(bdf, aes(x=edad))+geom_boxplot()+
+  geom_point(aes(x = min(bdf$edad), y = 0), size = 1) +
+  geom_point(aes(x = max(bdf$edad), y = 0), size = 1) +
+  xlim(min(bdf$edad)-3, max(bdf$edad)+3)+
+  annotate("text", x=min(bdf$edad), y=-0.1, 
+           label=paste0(min(bdf$edad)), size=3) +
+  annotate("text", x=max(bdf$edad), y=-0.1, 
+           label=paste0(max(bdf$edad)), size=3)
+p6 <- ggplot(bdf, aes(x=anos_dir))+geom_boxplot()+
+  geom_point(aes(x = min(bdf$anos_dir), y = 0), size = 1) +
+  geom_point(aes(x = max(bdf$anos_dir), y = 0), size = 1) +
+  xlim(min(bdf$anos_dir)-3, max(anos_dir)+3)+
+  annotate("text", x=min(bdf$anos_dir), y=-0.1, 
+           label=paste0(min(bdf$anos_dir)), size=3) +
+  annotate("text", x=max(bdf$anos_dir), y=-0.1, 
+           label=paste0(max(bdf$anos_dir)), size=3)
+p8 <- ggplot(bdf, aes(x=anos_aper))+geom_boxplot()+
+  geom_point(aes(x = min(bdf$anos_aper), y = 0), size = 1) +
+  geom_point(aes(x = max(bdf$anos_aper), y = 0), size = 1) +
+  xlim(min(bdf$anos_aper)-3, max(anos_aper)+3)+
+  annotate("text", x=min(bdf$anos_aper), y=-0.1, 
+           label=paste0(min(bdf$anos_aper)), size=3) +
+  annotate("text", x=max(bdf$anos_aper), y=-0.1, 
+           label=paste0(max(bdf$anos_aper)), size=3)
+p7 <- ggplot(bdf, aes(x=num_hij))+geom_histogram()
+p9 <- ggplot(bdf, aes(x=q_duenos))+geom_histogram()
+
+gridExtra::grid.arrange(p1,p5 , nrow=1,ncol=2)
+gridExtra::grid.arrange(p2,p4 , nrow=1,ncol=2)
+bdf[which(bdf$a.fun<1900),which(colnames(bdf)=="mot_duen")]
+gridExtra::grid.arrange(p3,p8 , nrow=1,ncol=2)
+gridExtra::grid.arrange(p6,p7 , nrow=1,ncol=2)
+p9
+
+## Valors perduts
+data_long <- bdf%>%gather(key = "variable", value = "valor")
+data_long %>%
+  group_by(variable) %>%
+  dplyr::summarize(porcentaje_NA = 100 * sum(is.na(valor)) / length(valor)) %>%
+  ggplot(aes(x = reorder(variable, desc(porcentaje_NA)), y = porcentaje_NA)) +
+  geom_col() +
+  labs(title = "Percentatge de valors perduts",
+       x = "Variable", y = "NA's") +
+  theme_bw()+ theme(axis.text.x=element_text(angle=90))
+bdf$sucfcat[(is.na(bdf$sucfcat))] <- "No"
+
+# Descriptiva de dades
+
+## Mapa Rubí
+rubi <- st_read("distadmin.geojson")
+rubi$id <- paste0(rubi$nomadmin)
+correspondencia <- c("C" = "Centre", "E" = "Est", "N" = "Nord", "NO" = "Nord Oest", 
+                     "S" = "Sud", "SO" = "Sud Oest")
+zon <- bdf$zona
+zon <- correspondencia[zon]
+num_emp <- as.data.frame(table(zon))
+colnames(num_emp) <- c("nomadmin", "num_emp")
+rubi_map <- merge(rubi, num_emp, by = "nomadmin", all.x = TRUE)
+rubi_map$porcentaje_respuestas <- (rubi_map$num_emp / sum(rubi_map$num_emp)) * 100
+ggplot(rubi_map) +
+  geom_sf(aes(fill = num_emp), color = "black") +
+  scale_fill_gradient(low = "white", high = "#00CED1") +
+  geom_sf_label(aes(label = paste0(round(porcentaje_respuestas), "%")), color = "black", 
+                size = 2, nudge_x = 0, nudge_y = 0) +
+  ggtitle("Distribució de resposta en els districtes") +
+  theme_minimal()+
+  theme(plot.title = element_text(size=10))
+
+## Directors vs propietaris
+counts <- table(bdf$duen)
+per <- round(counts/sum(counts) * 100, 1)
+df <- data.frame("categories"=names(counts),"counts"=as.numeric(counts),"per"=per)
+ggplot(data = df, aes(x = "", y = counts, fill = categories)) +
+  geom_bar(width = 1, stat = "identity", color = "white") +
+  coord_polar(theta = "y") +
+  theme_void() +
+  scale_fill_manual(values = c("direc" = "#FFB84C", "uprop" = "#A459D1", 
+                               "vprop" = "#2CD3E1")) +
+  geom_text(aes(label=paste0(counts,"\n",per,"%")),
+            position=position_stack(vjust=0.5)) +
+  ggtitle("Directors vs. Propietaris") +
+  theme(plot.title = element_text(size = 10))
+
+## Propietaris
+bdfprop <- bdf[which(bdf$duen!="direc"),]
+ggplot(data = bdfprop, aes(x = q_duenos)) +
+  geom_histogram(binwidth = 0.5, color = "white", fill = "#E3ACF9") +
+  geom_text(stat = "count", aes(label = ..count..), vjust = -0.5, size = 2) +
+  labs(title = "Propietarios", x = "# Propietarios", y = "Frecuencia")+ 
+  theme_minimal()
+
+## Quantitat de propietaris segons els anys d'apertura
+bdfprop <- bdf[which(bdf$duen!="direc"),]
+ggplot(bdfprop, aes(x = q_duenos, y = anos_aper)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) +  # Añadir la recta de regresión
+  xlab("q_duenos") +
+  ylab("anos_aper") +
+  ggtitle("Quantitat de propietaris segons els anys d'apertura")+
+  theme_minimal()
+
+## Anys de direcció
+grupos_edad <- cut(bdf$anos_dir, breaks=seq(0,50, by=5))
+df <- data.frame(bdf$anos_dir)
+df$grupos_edad <- cut(df$bdf.anos_dir, seq(0, 50, by = 5), right = FALSE)
+orden_niveles <- c("[0,5)", "[5,10)", "[10,15)", "[15,20)", "[20,25)", "[25,30)", 
+                   "[30,35)", "[35,40)", "[40,45)", "[45,50)")
+df$grupos_edad <- factor(df$grupos_edad, levels = orden_niveles)
+freq_edad <- table(df$grupos_edad)
+df_freq_edad <- data.frame(grupos_edad = as.character(names(freq_edad)), 
+                           freq = as.numeric(freq_edad))
+ggplot(data = df_freq_edad, aes(x = grupos_edad, y = freq)) +
+  geom_bar(stat = "identity", fill = "#E3ACF9") +
+  labs(x = "Anys", y = "Frecuencia") +
+  ggtitle("Anys a la posició actual de 5 en 5") +
+  theme_minimal() +
+  scale_x_discrete(limits = orden_niveles) + 
+  theme(axis.text.x = element_text(size = 8, angle = 90, hjust = 1),
+        plot.title = element_text(size = 10))
+tseries::jarque.bera.test(bdf$anos_dir)
+summary(bdf$anos_dir)
+sd(bdf$anos_dir)
+
+## Edats d'accès
+grupos_edad <- cut(bdf$anys, breaks=seq(15,65, by=5))
+df <- data.frame(bdf$anys)
+df$grupos_edad <- cut(df$bdf.anys, seq(15, 65, by = 5), right = FALSE)
+freq_edad <- table(df$grupos_edad)
+df_freq_edad <- data.frame(grupos_edad = as.character(names(freq_edad)), 
+                           freq = as.numeric(freq_edad))
+ggplot(data = df_freq_edad, aes(x = grupos_edad, y = freq)) +
+  geom_bar(stat = "identity", fill = "#E3ACF9") +
+  labs(x = "Edad", y = "Frecuencia") +
+  ggtitle("Edat d'accés de 5 en 5") +
+  theme_minimal()+ 
+  theme(axis.text.x = element_text(size = 8, angle = 90, hjust = 1),
+        plot.title = element_text(size = 10))
+tseries::jarque.bera.test(bdf$anys)
+summary(bdf$anys)
+sd(bdf$anys)
+
+## Edats
+grupos_edad <- cut(bdf$edad, breaks=seq(15,85, by=5))
+df <- data.frame(bdf$edad)
+df$grupos_edad <- cut(df$bdf.edad, seq(15, 80, by = 5), right = FALSE)
+freq_edad <- table(df$grupos_edad)
+df_freq_edad <- data.frame(grupos_edad = as.character(names(freq_edad)), 
+                           freq = as.numeric(freq_edad))
+ggplot(data = df_freq_edad, aes(x = grupos_edad, y = freq)) +
+  geom_bar(stat = "identity", fill = "#E3ACF9") +
+  labs(x = "Edad", y = "Frecuencia") +
+  ggtitle("Edats agrupades de 5 en 5") +
+  theme_minimal()+ 
+  theme(axis.text.x = element_text(size = 8, angle = 90, hjust = 1),
+        plot.title = element_text(size = 10))
+tseries::jarque.bera.test(bdf$edad)
+summary(bdf$edad)
+sd(bdf$edad)
+
+cor(data.frame(bdf$anos_dir,bdf$anys,bdf$edad))
+
+## Gènere resposta
+counts <- table(bdf$gen)
+per <- round(counts/sum(counts) * 100, 1)
+df <- data.frame(categories = names(counts), counts = as.numeric(counts), per = per)
+ggplot(data = df, aes(x = "", y = counts, fill = categories)) + 
+  geom_bar(width = 1, stat = "identity", color = "white") +
+  coord_polar(theta = "y") +
+  theme_void() +
+  scale_fill_manual(values = c("f" = "#BFDB38", "m" = "#FC7300")) +
+  geom_text(aes(label = paste0(counts, "\n", per, "%")),
+            position = position_stack(vjust = 0.5))+
+  ggtitle("Gènere de resposta")+
+  theme(plot.title = element_text(size=10))
+
+## Gènere empresa
+counts <- table(bdf$gen_emp)
+per <- round(counts/sum(counts) * 100, 1)
+df <- data.frame(categories = names(counts), counts = as.numeric(counts), per = per)
+ggplot(data = df, aes(x = "", y = counts, fill = categories)) + 
+  geom_bar(width = 1, stat = "identity", color = "white") +
+  coord_polar(theta = "y") +
+  theme_void() +
+  scale_fill_manual(values = c("f" = "#BFDB38", "m" = "#FC7300", "x" = "#D3D3D3")) +
+  geom_text(aes(label = paste0(counts, "\n", per, "%")),
+            position = position_stack(vjust = 0.5))+
+  ggtitle("Gènere d'empresa")+
+  theme(plot.title = element_text(size=10))
+
+## Gènere vs. gènere empresa
+bdfprop <- bdf[which(bdf$duen!="direc"),]
+porcentajes <- bdfprop %>%
+  filter(gen %in% c("f", "m")) %>%
+  group_by(gen, gen_emp) %>%
+  summarise(freq = sum(!is.na(gen_emp))) %>%
+  group_by(gen) %>%
+  mutate(porcentaje = freq / sum(freq) * 100) %>%
+  invisible()
+suppressMessages({
+  ggplot(porcentajes, aes(x = gen, y = freq, fill = gen_emp)) +
+    geom_bar(stat = "identity", position = "stack") +
+    geom_text(aes(label = paste0(round(porcentaje, 1), "%")), 
+              position = position_stack(vjust = 0.5),
+              size = 3, 
+              color = "black") +
+    scale_y_continuous(labels = scales::comma) +
+    labs(title = "Distribución género propietarios y género empresa",
+         x = "Género",
+         y = "Porcentaje") +
+    scale_fill_manual(values = c("f" = "#BFDB38", "m" = "#FC7300", "x" = "#D3D3D3")) +
+    theme_minimal() +
+    theme(plot.title = element_text(size = 10),
+          axis.text.x = element_text(size = 8, hjust = 1))
+})
+
+## Gènere empresa vs. Manera d'accés al càrrec
+porcentajes <- bdf %>%
+  filter(mot_duen %in% c(1, 2, 3, 4)) %>%
+  group_by(mot_duen, gen_emp) %>%
+  summarise(freq = sum(!is.na(gen_emp))) %>%
+  group_by(mot_duen) %>%
+  mutate(porcentaje = freq / sum(freq) * 100) %>%
+  invisible()
+suppressMessages({
+  ggplot(porcentajes, aes(x = mot_duen, y = freq, fill = gen_emp)) +
+    geom_bar(stat = "identity", position = "stack") +
+    geom_text(aes(label = paste0(round(porcentaje, 1), "%"), 
+                  y = freq, 
+                  group = gen_emp), 
+              position = position_stack(vjust = 0.5),
+              size = 3, 
+              color = "black") +
+    scale_y_continuous(labels = scales::comma) +
+    labs(title = "Distribución de género según el modo de acceso",
+         x = "Acceso al puesto",
+         y = "Porcentaje") +
+    scale_fill_manual(values = c("f" = "#BFDB38", "m" = "#FC7300", "x" = "#D3D3D3")) +
+    theme_minimal()+
+    theme(plot.title = element_text(size=10))
+})
+
+## Gènere de resposta vs. Situació sentimental
+porcentajes <- bdf %>%
+  filter(sit_sent %in% c("Con pareja", "Separado/a o divorciado/a", 
+                         "Soltero/a", "Viudo/a")) %>%
+  group_by(sit_sent, gen) %>%
+  summarise(freq = sum(!is.na(gen))) %>%
+  group_by(sit_sent) %>%
+  mutate(porcentaje = freq / sum(freq) * 100) %>%
+  invisible()
+suppressMessages({
+  ggplot(porcentajes, aes(x = sit_sent, y = freq, fill = gen)) +
+    geom_bar(stat = "identity", position = "stack") +
+    geom_text(aes(label = paste0(round(porcentaje, 1), "%"), 
+                  y = freq, 
+                  group = gen), 
+              position = position_stack(vjust = 0.5),
+              size = 3, 
+              color = "black") +
+    scale_y_continuous(labels = scales::comma) +
+    labs(title = "Distribución de género según situación sentimental",
+         x = "Situación sentimental",
+         y = "Porcentaje") +
+    scale_fill_manual(values = c("f" = "#BFDB38", "m" = "#FC7300")) +
+    theme_minimal()+
+    theme(plot.title = element_text(size=10))
+})
+
+## Nombre de fills
+ggplot(data = bdf, aes(x = num_hij)) +
+  geom_histogram(binwidth = 0.5, color = "white", fill = "#E3ACF9") +
+  geom_text(stat = "count", aes(label = ..count..), vjust = -0.5, size = 2) +
+  labs(title = "Cantidad de hijos", x = "# Hijos", y = "Frecuencia")+ 
+  theme_minimal()
+summary(bdf$num_hij)
+
+## Nombre de fills vs. Gènere de resposta
+ggplot(bdf, aes(x = gen, y = num_hij)) +
+  geom_boxplot() +
+  labs(title = "Distribución cantidad de hijos según género",
+       x = "Género",
+       y = "Hijos")
+
+## Nombre de fills vs. Càrrec que ocupa
+ggplot(bdf, aes(x = duen, y = num_hij)) +
+  geom_boxplot() +
+  labs(title = "Distribución cantidad de hijos según director o propietario",
+       x = "Propietario o director",
+       y = "Hijos")
+
+## Hores per un mateix
+orden_niveles <- c("0 - 4h", "5 - 9h", "10 - 14h", "15 - 19h", "Més de 20h")
+df <- data.frame(bdf$horas)
+freq_horas <- table(df$bdf.horas)
+df_freq_horas <- data.frame(bdf.horas = as.character(names(freq_horas)), 
+                            freq = as.numeric(freq_horas))
+ggplot(data = df_freq_horas, aes(x = bdf.horas, y = freq)) +
+  geom_bar(stat = "identity", fill = "#E3ACF9") +
+  labs(x = "Horas", y = "Frecuencia") +
+  ggtitle("Horas para uno mismo") +
+  theme_minimal() +
+  scale_x_discrete(limits = orden_niveles) + 
+  theme(axis.text.x = element_text(size = 8, angle = 90, hjust = 1),
+        plot.title = element_text(size = 10))
+
+## Hores per un mateix segons els anys que porta al càrrec
+ggplot(bdf, aes(x = horas, y = anos_dir)) +
+  geom_boxplot() +
+  labs(title = "Distribución de años de dirección según horas",
+       x = "Horas",
+       y = "Años de dirección")
+
+## Hores per un mateix segons el nombre de fills
+ggplot(bdf, aes(x = horas, y = num_hij)) +
+  geom_boxplot() +
+  labs(title = "Cantidad de hijos según horas libres",
+       x = "Horas",
+       y = "Hijos")
+
+## Hores per un mateix segons la situació sentimental
+porcentajes <- bdf %>%
+  filter(horas %in% c("0 - 4h", "5 - 9h", "10 - 14h", "15 - 19h", "Més de 20h")) %>%
+  group_by(horas, sit_sent) %>%
+  summarise(freq = sum(!is.na(sit_sent))) %>%
+  group_by(horas) %>%
+  mutate(porcentaje = freq / sum(freq) * 100) %>%
+  mutate(horas = factor(horas, levels = c("0 - 4h", "5 - 9h", 
+                                          "10 - 14h", "15 - 19h", "Més de 20h"))) %>%
+  invisible()
+suppressMessages({
+  ggplot(porcentajes, aes(x = horas, y = freq, fill = sit_sent)) +
+    geom_bar(stat = "identity", position = "stack") +
+    geom_text(aes(label = paste0(round(porcentaje, 1), "%"), 
+                  y = freq, 
+                  group = sit_sent), 
+              position = position_stack(vjust = 0.5),
+              size = 3, 
+              color = "black") +
+    scale_y_continuous(labels = scales::comma) +
+    labs(title = "Distribución de tiempo libre según situación sentimental",
+         x = "Situación sentimental",
+         y = "Porcentaje") +
+    scale_fill_manual(values = c("Con pareja" = "#F9B1C7", 
+                                 "Separado/a o divorciado/a" = "#AED3E9", 
+                                 "Soltero/a" = "#B7E4C7",
+                                 "Viudo/a" = "#D9B6E3")) +
+    theme_minimal() +
+    theme(plot.title = element_text(size = 10), 
+          axis.text.x = element_text(size = 8,  hjust = 1))
+})
+
+## Sector
+counts <- table(bdf$sector)
+names(counts) <- c("secundari", "terciari")
+per <- round(counts/sum(counts) * 100, 1)
+df <- data.frame(categories = names(counts), counts = as.numeric(counts), per = per)
+ggplot(data = df, aes(x = "", y = counts, fill = categories)) + 
+  geom_bar(width = 1, stat = "identity", color = "white") +
+  coord_polar(theta = "y") +
+  theme_void() +
+  scale_fill_manual(values = c("secundari" = "#F7C8E0", "terciari" = "#DFFFD8")) +
+  geom_text(aes(label = paste0(counts, "\n", per, "%")),
+            position = position_stack(vjust = 0.5))+
+  ggtitle("Sectors")+
+  theme(plot.title = element_text(size=10))
+
+## Sector vs. districte de Rubí
+porcentajes <- bdf %>%
+  filter(zona %in% c("NO", "N", "C", "E", "S", "SO")) %>%
+  group_by(zona, sector) %>%
+  summarise(freq = sum(!is.na(sector))) %>%
+  group_by(zona) %>%
+  mutate(porcentaje = freq / sum(freq) * 100) %>%
+  invisible()
+suppressMessages({
+  ggplot(porcentajes, aes(x = zona, y = freq, fill = sector)) +
+    geom_bar(stat = "identity", position = "stack") +
+    geom_text(aes(label = paste0(round(porcentaje, 1), "%"), 
+                  y = freq, 
+                  group = sector), 
+              position = position_stack(vjust = 0.5),
+              size = 3, 
+              color = "black") +
+    scale_y_continuous(labels = scales::comma) +
+    labs(title = "Distribución de estudios según sector",
+         x = "Estudios",
+         y = "Porcentaje") +
+    scale_fill_manual(values = c("2" = "#F7C8E0", "3" = "#DFFFD8")) +
+    theme_minimal()+
+    theme(plot.title = element_text(size=10), 
+          axis.text.x = element_text(size = 8, hjust = 1))
+})
+
+## Sector vs. estudis
+porcentajes <- bdf %>%
+  filter(estudios %in% c("ESO, Bachillerato, BUP, COU", 
+                         "Diplomatura universitaria o equivalente", 
+                         "Formación profesional",
+                         "Licenciatura universitaria o equivalente", 
+                         "Postgrado, máster, MIR o análogo y doctorado")) %>%
+  group_by(estudios, sector) %>%
+  summarise(freq = sum(!is.na(sector))) %>%
+  group_by(estudios) %>%
+  mutate(porcentaje = freq / sum(freq) * 100) %>%
+  invisible()
+suppressMessages({
+  ggplot(porcentajes, aes(x = estudios, y = freq, fill = sector)) +
+    geom_bar(stat = "identity", position = "stack") +
+    geom_text(aes(label = paste0(round(porcentaje, 1), "%"), 
+                  y = freq, 
+                  group = sector), 
+              position = position_stack(vjust = 0.5),
+              size = 3, 
+              color = "black") +
+    scale_y_continuous(labels = scales::comma) +
+    labs(title = "Distribución de estudios según sector",
+         x = "Estudios",
+         y = "Porcentaje") +
+    scale_fill_manual(values = c("2" = "#F7C8E0", "3" = "#DFFFD8")) +
+    theme_minimal()+
+    theme(plot.title = element_text(size=10), 
+          axis.text.x = element_text(size = 8, angle = 45, hjust = 1))
+})
+
+## Nombre d'assalariats vs. nombre de sucursals
+porcentajes <- bdf %>%
+  filter(nsuc %in% c("0", "1", "2")) %>%
+  group_by(nsuc, pers) %>%
+  summarise(freq = sum(!is.na(pers))) %>%
+  group_by(nsuc) %>%
+  mutate(porcentaje = freq / sum(freq) * 100) %>%
+  invisible()
+suppressMessages({
+  ggplot(porcentajes, aes(x = nsuc, y = freq, fill = pers)) +
+    geom_bar(stat = "identity", position = "stack") +
+    geom_text(aes(label = paste0(round(porcentaje, 1), "%"), 
+                  y = freq, 
+                  group = pers), 
+              position = position_stack(vjust = 0.5),
+              size = 3, 
+              color = "black") +
+    scale_y_continuous(labels = scales::comma) +
+    labs(title = "Distribución de cantidad de personal según número de sucursal",
+         x = "Número de sucursal",
+         y = "Porcentaje") +
+    scale_fill_manual(values = c("0" = "#EED2EE", "1" = "#DDA0DD", 
+                                 "2" = "#BA55D3", "3" = "#8A2BE2")) +
+    theme_minimal() +
+    theme(plot.title = element_text(size = 10))
+})
+
+## Nombre de sucursals vs. sucursals fora de Catalunya
+porcentajes <- bdf %>%
+  filter(nsuc %in% c("0", "1", "2")) %>%
+  group_by(nsuc, sucfcat) %>%
+  summarise(freq = sum(!is.na(sucfcat))) %>%
+  group_by(nsuc) %>%
+  mutate(porcentaje = freq / sum(freq) * 100) %>%
+  invisible()
+suppressMessages({
+  ggplot(porcentajes, aes(x = nsuc, y = freq, fill = sucfcat)) +
+    geom_bar(stat = "identity", position = "stack") +
+    geom_text(aes(label = paste0(round(porcentaje, 1), "%")), 
+              position = position_stack(vjust = 0.5),
+              size = 3, 
+              color = "black") +
+    scale_y_continuous(labels = scales::comma) +
+    labs(title = 
+           "Distribución sucursales fuera de cataluña según el número de sucursales",
+         x = "Número de sucursales",
+         y = "Porcentaje") +
+    scale_fill_manual(values = c("No" = "#B5D5C5", "Si, a nivel nacional" = "#F5F5DC", 
+                                 "Si, a nivel europeo" = "#B08BBB", 
+                                 "Si, a nivel intercontinental" = "#ECA869")) +
+    theme_minimal() +
+    theme(plot.title = element_text(size = 10),
+          axis.text.x = element_text(size = 8, hjust = 1))
+})
+
+## Nombre de sucursals vs. importació
+impor <- matrix(c(table(bdf$impor.no, bdf$nsuc)[2,],
+                  table(bdf$impor.nac, bdf$nsuc)[2,],
+                  table(bdf$impor.eur, bdf$nsuc)[2,],
+                  table(bdf$impor.inter, bdf$nsuc)[2,]),
+                byrow=T,ncol=length(table(bdf$nsuc)))
+df <- data.frame(
+  Categoria = c("impor.no", "impor.nac", "impor.eur", "impor.inter"),
+  nsuc_0 = impor[, 1],
+  nsuc_1 = impor[, 2],
+  nsuc_2 = impor[, 3]
+)
+df <- data.frame(
+  Categoria = c("impor.no", "impor.nac", "impor.eur", "impor.inter"),
+  nsuc_0 = impor[, 1],
+  nsuc_1 = impor[, 2],
+  nsuc_2 = impor[, 3]
+)
+df_long <- tidyr::gather(df, key = nsuc, value = Valor, -Categoria)
+df_long <- df_long %>% 
+  group_by(Categoria) %>%
+  mutate(Percent = Valor / sum(Valor) * 100)
+mis_colores <- c("#B4DCE7", "#87CEFA", "#1F75FE")
+ggplot(df_long, aes(x = Categoria, y = Valor, fill = nsuc)) +
+  geom_bar(stat = "identity", position = "stack") +
+  geom_text(aes(label = paste0(round(Percent), "%")), 
+            position = position_stack(vjust = 0.5), 
+            color = "black", size = 2) +
+  scale_fill_manual(values = mis_colores) +  
+  xlab("") +
+  ylab("Valor") +
+  ggtitle("Gráfico de Barras para todas las Categorías") +
+  theme_minimal()
+
+## Nombre de sucursals vs. exportació
+expor <- matrix(c(table(bdf$expor.no, bdf$nsuc)[2,],
+                  table(bdf$expor.nac, bdf$nsuc)[2,],
+                  table(bdf$expor.eur, bdf$nsuc)[2,],
+                  table(bdf$expor.inter, bdf$nsuc)[2,]),
+                byrow=T,ncol=length(table(bdf$nsuc)))
+df <- data.frame(
+  Categoria = c("expor.no", "expor.nac", "expor.eur", "expor.inter"),
+  nsuc_0 = expor[, 1],
+  nsuc_1 = expor[, 2],
+  nsuc_2 = expor[, 3]
+)
+df <- data.frame(
+  Categoria = c("expor.no", "expor.nac", "expor.eur", "expor.inter"),
+  nsuc_0 = expor[, 1],
+  nsuc_1 = expor[, 2],
+  nsuc_2 = expor[, 3]
+)
+df_long <- tidyr::gather(df, key = nsuc, value = Valor, -Categoria)
+df_long <- df_long %>% 
+  group_by(Categoria) %>%
+  mutate(Percent = Valor / sum(Valor) * 100)
+mis_colores <- c("#B4DCE7", "#87CEFA", "#1F75FE")
+ggplot(df_long, aes(x = Categoria, y = Valor, fill = nsuc)) +
+  geom_bar(stat = "identity", position = "stack") +
+  geom_text(aes(label = paste0(round(Percent), "%")), 
+            position = position_stack(vjust = 0.5), 
+            color = "black", size = 2) +
+  scale_fill_manual(values = mis_colores) +  
+  xlab("") +
+  ylab("Valor") +
+  ggtitle("Gráfico de Barras para todas las Categorías") +
+  theme_minimal()
+
+# Models inferencials
+
+bdffem <- bdf[bdf$gen_emp=="f",]
+bdfmas <- bdf[bdf$gen_emp=="m",]
+bdfmix <- bdf[bdf$gen_emp=="x",]
+bdfpropfem <- bdf[bdfprop$gen_emp=="f",]
+bdfpropmas <- bdf[bdfprop$gen_emp=="m",]
+bdfpropmix <- bdf[bdfprop$gen_emp=="x",]
+
+## sector = anys
+(smod <- summary(glm(sector~anys, data=bdfprop, family="binomial")))
+(smodf <- summary(glm(sector~anys, data=bdfpropfem, family="binomial")))
+(smodm <- summary(glm(sector~anys, data=bdfpropmas, family="binomial")))
+(smodx <- summary(glm(sector~anys, data=bdfpropmix, family="binomial")))
+
+## num_hij = nsuc + pers
+(smod <- summary(lm(num_hij ~ nsuc + pers, data = bdf)))
+(smodf <- summary(lm(num_hij ~ nsuc + pers, data = bdffem)))
+(smodm <- summary(lm(num_hij ~ nsuc + pers, data = bdfmas)))
+(smodx <- summary(lm(num_hij ~ nsuc + pers, data = bdfmix)))
+
+## sector = anys + num_hij + sit_sent + estudios
+bdfprop <- bdf[c(which(bdf$duen!="direc")), c(4,11,12,3,5,6,25,26,27,28)]
+bdfpropfem <- bdfprop[which(bdfprop$gen_emp=="f"),-1]
+bdfpropmas <- bdfprop[which(bdfprop$gen_emp=="m"),-1]
+bdfpropmix <- bdfprop[which(bdfprop$gen_emp=="x"),-1]
+(smod <- summary(glm(sector ~ anys + num_hij + sit_sent + estudios, 
+                     data = bdfprop, family="binomial")))
+(smodf <- summary(glm(sector ~ anys + num_hij + sit_sent + estudios, 
+                      data = bdfpropfem, family="binomial")))
+(smodm <- summary(glm(sector ~ anys + num_hij + sit_sent + estudios, 
+                      data = bdfpropmas, family="binomial")))
+(smodx <- summary(glm(sector ~ anys + num_hij + sit_sent + estudios, 
+                      data = bdfpropmix, family="binomial")))
+
+## anys = duen
+(smod <- summary(lm(anys ~ duen, data = bdf)))
+(smodf <- summary(lm(anys ~ duen, data = bdffem)))
+(smodm <- summary(lm(anys ~ duen, data = bdfmas)))
+(smodx <- summary(lm(anys ~ duen, data = bdfmix)))
+
+## anys = nsuc + pers + duen
+(smod <- summary(lm(anys ~ nsuc + pers + duen, data=bdf)))
+(smodf <- summary(lm(anys ~ nsuc + pers + duen, data=bdffem)))
+(smodm <- summary(lm(anys ~ nsuc + pers + duen, data=bdfmas)))
+(smodx <- summary(lm(anys ~ nsuc + pers + duen, data=bdfmix)))
+
+## num_hij = duen + gen + q_duenos
+summary(lm(num_hij~duen+gen+q_duenos,bdf))
+
+## sector = zona + estudios
+summary(glm(sector~zona+estudios,bdf,family="binomial"))
+summary(glm(sector~zona+estudios,bdffem,family="binomial"))
+summary(glm(sector~zona+estudios,bdfmas,family="binomial"))
+summary(glm(sector~zona+estudios,bdfmix,family="binomial"))
+
+## anos_aper = q_duenos
+summary(lm(anos_aper~q_duenos,bdf))
+summary(lm(anos_aper~q_duenos,bdffem))
+summary(lm(anos_aper~q_duenos,bdfmas))
+summary(lm(anos_aper~q_duenos,bdfmix))
